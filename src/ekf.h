@@ -4,95 +4,126 @@
 #include <cmath>
 
 class ekf {
+    Eigen::Matrix<double, 9, 1> x = Eigen::Matrix<double, 9, 1>::Zero();
+    Eigen::Matrix<double, 9, 9> p = Eigen::Matrix<double, 9, 9>::Zero();
+    Eigen::Matrix<double, 9, 9> f = Eigen::Matrix<double, 9, 9>::Zero();
+    Eigen::Matrix<double, 9, 9> q = Eigen::Matrix<double, 9, 9>::Zero();
+
+    //sonar sensor matrices.
+    Eigen::Matrix<double, 1, 9> hSonar = Eigen::Matrix<double, 1, 9>::Zero();
+    Eigen::Matrix<double, 1, 1> rSonar = Eigen::Matrix<double, 1, 1>::Zero();
+    Eigen::Matrix<double, 9, 1> kSonar = Eigen::Matrix<double, 9, 1>::Zero();
+
+    //pitot tube matrices
+    Eigen::Matrix<double, 1, 9> hPitot = Eigen::Matrix<double, 1, 9>::Zero();
+    Eigen::Matrix<double, 1, 1> rPitot = Eigen::Matrix<double, 1, 1>::Zero();
+    Eigen::Matrix<double, 9, 1> kPitot = Eigen::Matrix<double, 9, 1>::Zero();
+
+    //9 axix IMU matrices
+    Eigen::Matrix<double, 3, 9> hIMU = Eigen::Matrix<double, 3, 9>::Zero();
+    Eigen::Matrix<double, 3, 3> rIMU = Eigen::Matrix<double, 3, 3>::Zero();
+    Eigen::Matrix<double, 9, 3> kIMU = Eigen::Matrix<double, 9, 3>::Zero();
+
 public:
-    using VecX = Eigen::Matrix<double, 9, 1>;
-    using VecU = Eigen::Matrix<double, 3, 1>;
-    using MatXX = Eigen::Matrix<double, 9, 9>;
 
-    using Vec1 = Eigen::Matrix<double, 1, 1>;
-    using Mat19 = Eigen::Matrix<double, 1, 9>;
-    using Mat91 = Eigen::Matrix<double, 9, 1>;
-    using Mat11 = Eigen::Matrix<double, 1, 1>;
+    ekf() {
+        x = Eigen::Matrix<double, 9, 1>::Zero();
+        p = Eigen::Matrix<double, 9, 9>::Identity()*1.0;
+        f = Eigen::Matrix<double, 9, 9>::Zero();
+        q = Eigen::Matrix<double, 9, 9>::Identity()*0.01;
 
-    using Vec3 = Eigen::Matrix<double, 3, 1>;
-    using Mat39 = Eigen::Matrix<double, 3, 9>;
-    using Mat93 = Eigen::Matrix<double, 9, 3>;
-    using Mat33 = Eigen::Matrix<double, 3, 3>;
+        hSonar(0,8) = 1.0;
+        rSonar = Eigen::Matrix<double, 1, 1>::Identity()*0.1;
+        kSonar = Eigen::Matrix<double, 9, 1>::Zero();
 
-    using DynFunc = VecX (*)(const VecX&, const VecU&, double);
-    using DynJacFunc = MatXX (*)(const VecX&, const VecU&, double);
+        hPitot(0,0) = 1.0;
+        rPitot = Eigen::Matrix<double, 1, 1>::Identity()*0.25;
+        kPitot = Eigen::Matrix<double, 9, 1>::Zero();
 
-    using Meas1Func = Vec1 (*)(const VecX&);
-    using Jac1Func = Mat19 (*)(const VecX&);
+        hIMU(0,3) = 1.0;
+        hIMU(1, 4) = 1.0;
+        hIMU(2,5) = 1.0;
+        rIMU = Eigen::Matrix<double, 3, 3>::Identity()*0.01;
+        kIMU = Eigen::Matrix<double, 9, 3>::Zero();
 
-    using Meas3Func = Vec3 (*)(const VecX&);
-    using Jac3Func = Mat39 (*)(const VecX&);
-
-    VecX x = VecX::Zero();
-    MatXX P = MatXX::Identity();
-    MatXX Q = 1e-4 * MatXX::Identity();
-
-    void predict(DynFunc f, DynJacFunc jac_f, const VecU& u, double dt) {
-        const MatXX F = jac_f(x, u, dt);
-        x = f(x, u, dt);
-        P = F * P * F.transpose() + Q;
-        symmetrizeP();
     }
 
-    void update1(const Vec1& z, Meas1Func h, Jac1Func jac_h, const Mat11& R) {
-        const Vec1 innov = z - h(x);
-        const Mat19 H = jac_h(x);
-        const Mat91 PHT = P * H.transpose();
-        const Mat11 S = H * PHT + R;
+    void predict(double dt) {
 
-        const double denom = S(0, 0);
-        if (std::abs(denom) < 1e-12 || !std::isfinite(denom)) {
+        //making state vector
+        double forwardV = x(0);
+        double lateralV = x(1);
+        double verticalV = x(2);
+        double rollRate = x(3);
+        double pitchRate = x(4);
+        double yawRate = x(5);
+        double rollAngle = x(6);
+        double pitchAngle = x(7);
+        double height = x(8);
+
+        x(6) = rollAngle + rollRate*dt;
+        x(7) = pitchAngle + pitchRate*dt;
+
+        x(8) = height + (forwardV * std::sin(pitchAngle) - lateralV * std::sin(rollAngle) * std::cos(pitchAngle) -
+                    verticalV * std::cos(rollAngle) * std::cos(pitchAngle)) * dt;
+
+        f.setIdentity();
+        f(6,3) = dt;
+        f(7, 4) = dt;
+        f(8,0) = std::sin(pitchAngle) * dt;
+        f(8,1) = -std::sin(rollAngle) * std::cos(pitchAngle) * dt;
+        f(8,2) = -std::cos(rollAngle) * std::cos(pitchAngle) * dt;
+        f(8,6) = (-lateralV * std::cos(rollAngle) * std::cos(pitchAngle) + verticalV * std::sin(rollAngle) *
+                          std::cos(pitchAngle)) * dt;
+        f(8,7) = (forwardV * std::cos(pitchAngle) + lateralV * std::sin(rollAngle) * std::sin(pitchAngle) +
+                          verticalV * std::cos(rollAngle) * std::sin(pitchAngle)) * dt;
+
+        p = f*p*f.transpose() + q;
+
+    }
+
+    void updateSonar (double z) {
+        if (std::abs(std::cos(x(6)) * std::cos(x(7))) < 0.5)
             return;
-        }
 
-        const Mat91 K = PHT / denom;
-        x = x + K * innov;
+        double y = z - ( x(8) / (std::cos(x(6)) * std::cos(x(7))));
 
-        const MatXX IKH = MatXX::Identity() - K * H;
-        P = IKH * P * IKH.transpose() + K * R * K.transpose();
-        symmetrizeP();
+        hSonar(0,6) = (x(8) * std::sin (x(6))) / (std::pow(std::cos(x(6)), 2) * std::cos(x(7)));
+        hSonar(0,7) = (x(8) * std::sin(x(7))) / (std::cos(x(6)) * (std::pow(std::cos(x(7)),2)));
+        hSonar(0,8) = 1 / (std::cos(x(6)) * std::cos(x(7)));
+
+        Eigen::Matrix<double, 1, 1> S = Eigen::Matrix<double, 1, 1>::Zero();
+        S = hSonar * p * hSonar.transpose() + rSonar;
+
+        if ((y * y) / S(0, 0) > 9.0)
+            return;
+
+        kSonar = p * hSonar.transpose() * S.inverse();
+        x = x + kSonar * y;
+        p = (Eigen::Matrix<double, 9, 9>::Identity()*1.0 - kSonar * hSonar) * p;
     }
 
-    void update3(const Vec3& z, Meas3Func h, Jac3Func jac_h, const Mat33& R) {
-        const Vec3 innov = z - h(x);
-        const Mat39 H = jac_h(x);
-        const Mat93 PHT = P * H.transpose();
-        const Mat33 S = H * PHT + R;
+    void updatePitot (double z) {
+        double y = z - x(0);
+        Eigen::Matrix<double, 1, 1> S = Eigen::Matrix<double, 1, 1>::Zero();
+        S = hPitot * p * hPitot.transpose() + rPitot;
 
-        const Mat39 KT = S.ldlt().solve(PHT.transpose());
-        const Mat93 K = KT.transpose();
-
-        x = x + K * innov;
-
-        const MatXX IKH = MatXX::Identity() - K * H;
-        P = IKH * P * IKH.transpose() + K * R * K.transpose();
-        symmetrizeP();
+        kPitot = p * hPitot.transpose() * S.inverse();
+        x = x + kPitot * y;
+        p = (Eigen::Matrix<double, 9, 9>::Identity()*1.0 - kPitot * hPitot) * p;
     }
 
-    bool gate1(const Vec1& innov, const Mat19& H, const Mat11& R, double chi2_thresh) const {
-        const Mat11 S = H * P * H.transpose() + R;
-        const double denom = S(0, 0);
-        if (std::abs(denom) < 1e-12 || !std::isfinite(denom)) {
-            return false;
-        }
-        const double nis = (innov(0, 0) * innov(0, 0)) / denom;
-        return std::isfinite(nis) && (nis <= chi2_thresh);
+    void updateIMU (const Eigen::Vector3d z) {
+        Eigen::Vector3d y = z - hIMU * x;
+        Eigen::Matrix<double, 3, 3> S = Eigen::Matrix<double, 3, 3>::Zero();
+        S = hIMU * p * hIMU.transpose() + rIMU;
+
+        kIMU = p * hIMU.transpose() * S.inverse();
+        x = x + kIMU * y;
+        p = (Eigen::Matrix<double, 9, 9>::Identity()*1.0 - kIMU * hIMU) * p;
     }
 
-    bool gate3(const Vec3& innov, const Mat39& H, const Mat33& R, double chi2_thresh) const {
-        const Mat33 S = H * P * H.transpose() + R;
-        const Vec3 sol = S.ldlt().solve(innov);
-        const double nis = innov.dot(sol);
-        return std::isfinite(nis) && (nis <= chi2_thresh);
-    }
-
-private:
-    void symmetrizeP() {
-        P = 0.5 * (P + P.transpose());
+    Eigen::Matrix<double, 9 ,1> getstate() {
+        return x;
     }
 };
