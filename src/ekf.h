@@ -24,6 +24,10 @@ class ekf {
     Eigen::Matrix<double, 3, 3> rIMU = Eigen::Matrix<double, 3, 3>::Zero();
     Eigen::Matrix<double, 9, 3> kIMU = Eigen::Matrix<double, 9, 3>::Zero();
 
+    Eigen::Matrix<double, 2, 9> hAtt = Eigen::Matrix<double, 2, 9>::Zero();
+    Eigen::Matrix<double, 2, 2> rAtt = Eigen::Matrix<double, 2, 2>::Zero();
+    Eigen::Matrix<double, 9, 2> kAtt = Eigen::Matrix<double, 9, 2>::Zero();
+
 public:
 
     ekf() {
@@ -44,7 +48,19 @@ public:
         hIMU(1, 4) = 1.0;
         hIMU(2,5) = 1.0;
         rIMU = Eigen::Matrix<double, 3, 3>::Identity()*0.01;
-        kIMU = Eigen::Matrix<double, 9, 3>::Zero();
+        kIMU = Eigen::Matrix<double, 9, 3>::Zero();\
+
+        hAtt(0, 6) = 1.0;
+        hAtt(1,7) = 1.0;
+        rAtt = Eigen::Matrix<double, 2, 2>::Identity() * 0.005;
+
+        q(6, 6) = 1e-5;
+        q(7, 7) = 1e-5;
+        q(8, 8) = 1e-4;
+        q(0, 0) = 1e-3;
+        q(1, 1) = 1e-3;
+        q(2, 2) = 1e-3;
+        q(3, 3) = q(4, 4) = q(5, 5) = 1e-3;
 
     }
 
@@ -123,7 +139,17 @@ public:
         p = (Eigen::Matrix<double, 9, 9>::Identity()*1.0 - kIMU * hIMU) * p;
     }
 
+    void updateAttitude(const Eigen::Vector2d& z) {
+        Eigen::Vector2d y = z - hAtt * x;
+        Eigen::Matrix<double, 2, 2> S = hAtt * p * hAtt.transpose() + rAtt;
+
+        kAtt = p * hAtt.transpose() * S.inverse();
+        x = x + kAtt * y;\
+        p = (Eigen::Matrix<double, 9, 9>::Identity() - kAtt * hAtt) * p;
+    }
+
     Eigen::Matrix<double, 9 ,1> getstate() {
         return x;
     }
+
 };
